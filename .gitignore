@@ -9,5 +9,4 @@ data/
 
 Output_*
 *.ps1
-
-getsensors.py
+alltargets
