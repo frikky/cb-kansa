@@ -1,0 +1,7 @@
+*.swp
+*.swo
+
+targets
+Modules/
+kansa.ps1
+data/
