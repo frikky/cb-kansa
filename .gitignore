@@ -3,5 +3,11 @@
 
 targets
 Modules/
+Analysis/
 kansa.ps1
 data/
+
+Output_*
+*.ps1
+
+getsensors.py
