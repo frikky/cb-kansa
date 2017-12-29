@@ -12,8 +12,14 @@ There are bugs, as this is currently just a PoC.
 * Good to go!
 
 ## Example:
+Generate list of targets (Based on groupid 1 within the last day~):
 ```bash
-$ python kansa.py -targetlist <targetfile> -pushbin true
+$ python getsensors.py
+```
+
+Run kansa on these targets, and get data back:
+```bash
+$ python kansa.py -targetlist alltargets.txt -pushbin true
 ```
 
 This will run Kansa on the targets specified with all available modules. You will then find all output data in a folder matching Output\_d{14} (timestamped)

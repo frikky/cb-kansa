@@ -35,7 +35,7 @@ def writetofile(filepath, allsensors):
 #print sensor
 if __name__ == "__main__":
     groupid = 1
-    filename = "alltargets"
+    filename = "alltargets.txt"
 
     allsensors = getsensors(groupid)
     writetofile(filename, allsensors)
