@@ -3,6 +3,7 @@ import zipfile
 import requests
 import argparse 
 from shutil import copy, copytree, rmtree
+import commands
 
 import cbapi # Used for error handling
 from cbapi.response import *
@@ -43,8 +44,6 @@ class Kansa(object):
 
             print "\n".join(self.modules)
         else:
-            # FIX - need to do subfolders etc.
-            # FIX - maybe this should follow the conf file :/
             modulepath = "Modules/Modules.conf"
             configfile = self.get_configuration_paths(modulepath)
             for item in configfile: 
@@ -154,6 +153,35 @@ class Kansa(object):
     def check_target_list(self):
         return os.path.exists(self.args.targetlist)
 
+    def get_all_results(self, object, fullfolderlocation, output_folder):
+        for sensor in self.all_sensors:
+            jobcheck = self.cb.live_response.submit_job(object, sensor)
+
+            self.save_zip_data(sensor.computer_name, jobcheck.result())
+
+    def run_command(self, object):
+        for sensor in self.all_sensors:
+            jobcheck = self.cb.live_response.submit_job(object, sensor)
+
+        # FIX - should remove sensors that aren't being scanned while underway
+        return jobcheck.result()
+
+    #def run_command(self, job, fullfolderlocation):
+    #    output_folder = "Output_2018123123"
+    #    job.outputfolder = output_folder
+    #    
+    #    for sensor in self.all_sensors:
+    #        print "Running commands on %s" % sensor.computer_name
+    #        self.cb.live_response.submit_job(job.put_local_file, sensor)
+    #        print "Unzipping data on %s" % sensor.computer_name
+    #        self.cb.live_response.submit_job(job.unzip_remote, sensor)
+    #        print "Running Kansa on %s" % sensor.computer_name
+    #        self.cb.live_response.submit_job(job.run_kansa, sensor)
+    #        print "Running unzipping on %s" % sensor.computer_name
+    #        self.cb.live_response.submit_job(job.zip_remote, sensor)
+    #        print "Getting all files - this will take a while"
+    #        self.get_all_results(job.get_zip_data, fullfolderlocation, output_folder)
+
     # Does all the hard work
     def loop_targets(self, datafoldername, folderlocation, local_location):
         if not self.targets:
@@ -177,47 +205,46 @@ class Kansa(object):
 
         # This is where everything on the targets happens
         # http://cbapi.readthedocs.io/en/latest/live-response.html
+
+        # FIX - Not sure if this should loop targets or loop commands
+        job = commands.handleAllJobs(local_location, default_remote_location, folderlocation, fullfolderlocation, datafoldername, outputfolder="")
+
+        # Finds all target sensors
+        self.all_sensors = []
         for target in self.targets:
             sensor = self.cb.select(Sensor).where("hostname:%s" % target).first()
-            print "Sending data to %s with %d modules" % (target, len(self.modules))
-            try:
-                with sensor.lr_session() as session:
-                    # Puts and prepares the files for running
-                    self.put_local_file(session, local_location, default_remote_location)
-                    self.unzip_remote(session, folderlocation, local_location)
+            self.all_sensors.append(sensor)
 
-                    # Runs Kansa on the localhost, and returns with the foldername
-                    kansa_ret = self.run_kansa(session, fullfolderlocation)
-                    if not kansa_ret:
-                        print "Skipping %s" % target
-                        print self.cleanup_target(session, datafoldername)
-                        continue
+        #self.run_command(job, fullfolderlocation) 
 
-                    output_folder = self.find_foldername(kansa_ret)
+        print "Putting files on all targets" 
+        self.run_command(job.put_local_file)
 
-                    # Uses the foldername to zip, and get it back for later analysis
-                    self.zip_remote(session, fullfolderlocation, output_folder)
-                    zip_data = session.get_file("%s/%s.zip" % (fullfolderlocation, output_folder))
-                    self.save_zip_data(target, zip_data)
-                    print self.cleanup_target(session, datafoldername)
-            except AttributeError:
-                continue
+        print "Unzipping on all targets"
+        self.run_command(job.unzip_remote)
 
-        # Temporary local cleanup
-        # FIX - With threading, it might jump here too fast
+        print "Running kanza on all targets" 
+        kansa_ret = self.run_command(job.run_kansa)
+
+        output_folder = self.find_foldername(kansa_ret)
+        job.outputfolder = output_folder
+
+        print "Zipping remote datafolder"
+        self.run_command(job.zip_remote)
+
+        print "Getting all files - this will take a while"
+        self.get_all_results(job.get_zip_data, fullfolderlocation, output_folder)
+
+        # Good to have either way, as the user might have gotten some of the data, but not all etc.
+        print "Cleaning up all targets"
+        self.run_command(job.cleanup_target)
+
+        print "Cleaning up local host."
         rmtree(datafoldername)
         os.remove("%s.zip" % datafoldername)
 
         # Returns the foldername used for analysis. This will be the timestamp of the last machine.
         return output_folder
-
-    # Cleans up the remote hosts files
-    def cleanup_target(self, session, folderpath):
-        print "Cleaning up remote host."
-        # Use force if it fails? Might be in use. 
-        command = "powershell.exe \"Remove-Item \'C:\\temp\\%s\' -Recurse -Force\"" % folderpath
-        ret = session.create_process(command)
-        return ret
 
     # Saves it in a temporary location (FIX - Not sure what to do here yet)
     def save_zip_data(self, targetname, zip_data):
@@ -240,63 +267,6 @@ class Kansa(object):
             if "Foldername" in line:
                 return line.split(" ")[-1]
 
-    # Pass arguments for kannsa to run like normal
-    def run_kansa(self, session, foldername):
-        print "Starting analysis with Kansa."
-        targetlist = "targetlist.txt"
-
-        # Creates a targetlist, as without targetlist, winremoting is required.
-        # The last commands (ls/write-host) are used to find the output folder as this is not part 
-        # Fix - handle modules here somehow (self.modules)
-        commands = [
-            "(echo $env:COMPUTERNAME > %s)" % targetlist,
-            #"powershell.exe -exec bypass -File kansa.ps1 -targetlist %s -Modulepath \'.\Modules\'" % targetlist,
-            "powershell.exe -exec bypass -File kansa.ps1 -targetlist %s" % targetlist,
-            "(Write-Host \'Foldername:\' $(ls | sls -Pattern \'Output_\d{14}\'))"
-        ]
-
-        powershell_cmd = 'powershell.exe \"%s\"' % ";".join(commands)
-
-        # FIX - Win32 error code 0x8007010B might occur (or others)
-        try:
-            ret = session.create_process(powershell_cmd, working_directory=foldername, wait_timeout=300)
-        except cbapi.live_response_api.LiveResponseError:
-            return False
-
-        print "Done with analysis - Grabbing files"
-
-        return ret
-
-    # Zips the file to get it back from the remote host
-    def zip_remote(self, session, folderpath, zipname):
-        print "Zipping remote file"
-        command = 'powershell.exe \"Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::CreateFromDirectory(\'%s\\%s\', \'%s\\%s.zip\')\"' % (folderpath, zipname, folderpath, zipname)
-        ret = session.create_process(command)
-        
-        return ret
-
-    # Unzips and removes the zipfile
-    def unzip_remote(self, session, filepath, zipfile):
-        "Unzip payload on remote system"
-        filepath = "%s%s" % (filepath, zipfile)
-        new_filename = filepath[:-4]
-
-        command = 'powershell.exe \"Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory(\'%s\', \'%s\'); rm \'%s\'\"' % (filepath, new_filename, filepath)
-        ret = session.create_process(command)
-
-        return ret
-
-    # Runs all commands involved within a single session
-    def put_local_file(self, session, local_location, remote_location): 
-        with open(local_location, "rb") as tmp:
-            try:
-                session.put_file(tmp, remote_location)
-            except cbapi.live_response_api.LiveResponseError:
-                # FIX - Remove file and reupload, as this most likely means duplication
-                pass
-
-            print "Zipfile added. Starting extraction"
-
     # Have to do some magic since extractall sucks, and cba doing more for now
     def unzip(self, folderpath):
         try:
@@ -307,8 +277,12 @@ class Kansa(object):
         z.extractall(folderpath)
 
     # Reorganizes the data for use with kansa analysis
+    # This step is uneccesary, but I don't want to redo the mess above just yet :)
     def prepare_analysis(self, datafolder, analysisfolder):
         print "Moving files for analysis"
+
+        if not os.path.exists(datafolder):
+            os.mkdir(datafolder)
 
         if not os.path.exists(analysisfolder):
             os.mkdir(analysisfolder)
@@ -370,9 +344,9 @@ if __name__ == "__main__":
 
     # Sends the actual data to the targets 
     print "Done preparing data for sending"
-    foldername = kansa.loop_targets(foldername, folderlocation, zipname)
+    analysisfolder = kansa.loop_targets(foldername, folderlocation, zipname)
 
     # ANALYSIS
-    analysisfolder = "Output_20171229203926"
+    #analysisfolder = "Output_20171229203926"
     datafolder = "data"
     kansa.prepare_analysis(datafolder, analysisfolder)

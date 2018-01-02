@@ -10,3 +10,5 @@ data/
 Output_*
 *.ps1
 alltargets
+
+targetdata*
