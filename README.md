@@ -19,7 +19,7 @@ $ python getsensors.py
 
 Run kansa on these targets, and get data back:
 ```bash
-$ python kansa.py -targetlist alltargets.txt -pushbin true
+$ python3 kansa.py --targetlist alltargets.txt --pushbin true
 ```
 
 This will run Kansa on the targets specified with all available modules. You will then find all output data in a folder matching Output\_d{14} (timestamped)
@@ -29,8 +29,9 @@ This will run Kansa on the targets specified with all available modules. You wil
 * Test threading thoroughly for multiple targets - They have job based api :)
 * Fix upper and lowercase for executables 
 * Fix save location for executables
-* Hardcoded folderlocations etc
+* Hardcoded folderlocations 
 * Change the ugly powershell commands to be pretty (:
+* FIX error handling for sensors
 
 ## Done ish
 * Configuration file for modules

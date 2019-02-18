@@ -4,18 +4,21 @@ import requests
 import argparse 
 from shutil import copy, copytree, rmtree
 import commands
+import urllib3
 
 import cbapi # Used for error handling
 from cbapi.response import *
 
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 parser = argparse.ArgumentParser("Kansa", description="Carbon Black parser for Kansa")
 
 # Send target
-parser.add_argument("-targetlist", default="", help="Add a targetlist")
+parser.add_argument("--targetlist", default="", help="Add a targetlist")
 #parser.add_argument("--TargetCount", help="Do stuff")
-parser.add_argument("-target", default="", help="Add a target")
-parser.add_argument("-ModulePath", default="", help="Add modules to be used")
-parser.add_argument("-pushbin", default=False, help="Push depencies")
+parser.add_argument("--target", default="", help="Run on a single target")
+parser.add_argument("--targetlocation", default="C:\\temp\\", help="Location to save on remote host")
+parser.add_argument("--ModulePath", default="", help="Add modules to be used")
+parser.add_argument("--pushbin", default=False, help="Push depencies")
 
 class Kansa(object):
     def __init__(self): 
@@ -24,6 +27,7 @@ class Kansa(object):
         self.modules = []
         self.cb = CbResponseAPI()
 
+
     # Handles input parameters
     def handle_arguments(self):
         targets = []
@@ -31,7 +35,7 @@ class Kansa(object):
             if self.check_target_list():
                 self.targets = open(self.args.targetlist, "r").read().splitlines()
             else:
-                print "File \"%s\" doesn't exist" % self.args.targetlist
+                print("File \"%s\" doesn't exist" % self.args.targetlist)
                 exit()
 
         # Doesnt overwrite targetlist
@@ -42,7 +46,7 @@ class Kansa(object):
             for item in self.args.ModulePath.split(","):
                 self.modules.append(item)
 
-            print "\n".join(self.modules)
+            print("\n".join(self.modules))
         else:
             modulepath = "Modules/Modules.conf"
             configfile = self.get_configuration_paths(modulepath)
@@ -171,21 +175,21 @@ class Kansa(object):
     #    job.outputfolder = output_folder
     #    
     #    for sensor in self.all_sensors:
-    #        print "Running commands on %s" % sensor.computer_name
+    #        print("Running commands on %s" % sensor.computer_name)
     #        self.cb.live_response.submit_job(job.put_local_file, sensor)
-    #        print "Unzipping data on %s" % sensor.computer_name
+    #        print("Unzipping data on %s" % sensor.computer_name)
     #        self.cb.live_response.submit_job(job.unzip_remote, sensor)
-    #        print "Running Kansa on %s" % sensor.computer_name
+    #        print("Running Kansa on %s" % sensor.computer_name)
     #        self.cb.live_response.submit_job(job.run_kansa, sensor)
-    #        print "Running unzipping on %s" % sensor.computer_name
+    #        print("Running unzipping on %s" % sensor.computer_name)
     #        self.cb.live_response.submit_job(job.zip_remote, sensor)
-    #        print "Getting all files - this will take a while"
+    #        print("Getting all files - this will take a while")
     #        self.get_all_results(job.get_zip_data, fullfolderlocation, output_folder)
 
     # Does all the hard work
-    def loop_targets(self, datafoldername, folderlocation, local_location):
+    def loop_targets(self, datafoldername, local_location):
         if not self.targets:
-            print "Missing targets - exiting."
+            print("Missing targets - exiting.")
             exit()
     
         # Manages filenames in a horrible way
@@ -198,8 +202,8 @@ class Kansa(object):
             new_filename = local_location
 
         # Some folder definitions, including save location
-        fullfolderlocation = "%s%s\\%s" % (folderlocation, datafoldername, datafoldername)
-        default_remote_location = "%s%s" % (folderlocation, new_filename)
+        fullfolderlocation = "%s%s\\%s" % (self.args.targetlocation, datafoldername, datafoldername)
+        default_remote_location = "%s%s" % (self.args.targetlocation, new_filename)
 
         output_folder = ""
 
@@ -207,7 +211,7 @@ class Kansa(object):
         # http://cbapi.readthedocs.io/en/latest/live-response.html
 
         # FIX - Not sure if this should loop targets or loop commands
-        job = commands.handleAllJobs(local_location, default_remote_location, folderlocation, fullfolderlocation, datafoldername, outputfolder="")
+        job = commands.handleAllJobs(local_location, default_remote_location, self.args.targetlocation, fullfolderlocation, datafoldername, outputfolder="")
 
         # Finds all target sensors
         self.all_sensors = []
@@ -215,31 +219,29 @@ class Kansa(object):
             sensor = self.cb.select(Sensor).where("hostname:%s" % target).first()
             self.all_sensors.append(sensor)
 
-        #self.run_command(job, fullfolderlocation) 
-
-        print "Putting files on all targets" 
+        print("Putting files on all targets")
         self.run_command(job.put_local_file)
 
-        print "Unzipping on all targets"
+        print("Unzipping on all targets")
         self.run_command(job.unzip_remote)
 
-        print "Running kanza on all targets" 
+        print("Running kanza on all targets")
         kansa_ret = self.run_command(job.run_kansa)
 
         output_folder = self.find_foldername(kansa_ret)
         job.outputfolder = output_folder
 
-        print "Zipping remote datafolder"
+        print("Zipping remote datafolder")
         self.run_command(job.zip_remote)
 
-        print "Getting all files - this will take a while"
+        print("Getting all files - this will take a while")
         self.get_all_results(job.get_zip_data, fullfolderlocation, output_folder)
 
         # Good to have either way, as the user might have gotten some of the data, but not all etc.
-        print "Cleaning up all targets"
+        print("Cleaning up all targets")
         self.run_command(job.cleanup_target)
 
-        print "Cleaning up local host."
+        print("Cleaning up local host.")
         rmtree(datafoldername)
         os.remove("%s.zip" % datafoldername)
 
@@ -249,21 +251,21 @@ class Kansa(object):
     # Saves it in a temporary location (FIX - Not sure what to do here yet)
     def save_zip_data(self, targetname, zip_data):
         if not os.path.exists("data"):
-            print "Creating data folder"
+            print("Creating data folder")
             os.mkdir("data")
         if not os.path.exists("data/%s" % targetname):
-            print "Creating %s folder" % targetname
+            print("Creating %s folder" % targetname)
             os.mkdir("data/%s" % targetname)
             
-        with open("data/%s/data.zip" % targetname, "w+") as tmp:
+        with open("data/%s/data.zip" % targetname, "wb+") as tmp:
             tmp.write(zip_data)
 
-        print "Zipped data locally"
+        print("Zipped data locally")
         
     # Finds the foldername specified in the return data used for zipping
     def find_foldername(self, kansa_ret):
-        print "Finding foldername in return"
-        for line in kansa_ret.split("\n"):
+        print("Finding foldername in return")
+        for line in kansa_ret.decode("utf-8").split("\n"):
             if "Foldername" in line:
                 return line.split(" ")[-1]
 
@@ -279,7 +281,7 @@ class Kansa(object):
     # Reorganizes the data for use with kansa analysis
     # This step is uneccesary, but I don't want to redo the mess above just yet :)
     def prepare_analysis(self, datafolder, analysisfolder):
-        print "Moving files for analysis"
+        print("Moving files for analysis")
 
         if not os.path.exists(datafolder):
             os.mkdir(datafolder)
@@ -329,24 +331,22 @@ class Kansa(object):
             # Removes the original folder as its empty 
             #rmtree(datafolder)
 
-        print "%s is now ready for analysis with %d files and %d system(s)" % (analysisfolder, filecount, computercount)
+        print("%s is now ready for analysis with %d files and %d system(s)" % (analysisfolder, filecount, computercount))
 
 # Testing for uploading data to the endpoint 
 if __name__ == "__main__":
     # Prepares data for connection with CB sensor
     kansa = Kansa()
     foldername = "targetdata"
-    folderlocation = "c:\\temp\\"
 
     kansa.handle_arguments()
     kansa.pack_target_data(foldername)
     zipname = kansa.compress_target_data(foldername)
 
     # Sends the actual data to the targets 
-    print "Done preparing data for sending"
-    analysisfolder = kansa.loop_targets(foldername, folderlocation, zipname)
+    print("Done preparing data for sending")
+    analysisfolder = kansa.loop_targets(foldername, zipname)
 
     # ANALYSIS
-    #analysisfolder = "Output_20171229203926"
     datafolder = "data"
     kansa.prepare_analysis(datafolder, analysisfolder)

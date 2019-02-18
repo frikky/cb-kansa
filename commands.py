@@ -1,3 +1,5 @@
+import cbapi # Used for error handling
+
 class handleAllJobs(object):
     def __init__(self, local_location, remote_location, folderlocation, fullfolderlocation, datafoldername, outputfolder=""):
         self.local_location = local_location # Saves local location for the data
@@ -13,16 +15,17 @@ class handleAllJobs(object):
             try:
                 ret = session.put_file(tmp, self.remote_location)
                 return ret
-            except cbapi.live_response_api.LiveResponseError:
-                return False
+            except cbapi.live_response_api.LiveResponseError as e:
                 # FIX - Remove file and reupload, as this most likely means duplication
-                pass
+                # Most likely error: Win32 error code 0x80070003 (ERROR_PATH_NOT_FOUND)
+                print("Host %d error: %s" % (session.sensor_id, e))
+                return False
 
-        return False
+        return True 
 
     # Unzips and removes the zipfile
     def unzip_remote(self, session):
-        "Unzip payload on remote system"
+        print("Unzip payload on remote system")
         filepath = "%s%s" % (self.folderlocation, self.local_location)
         new_filename = filepath[:-4]
 
@@ -31,16 +34,17 @@ class handleAllJobs(object):
 
         return True
 
-    # Pass arguments for kannsa to run like normal
+    # Pass arguments for kansa to run like normal
     def run_kansa(self, session):
         targetlist = "targetlist.txt"
 
         # Creates a targetlist, as without targetlist, winremoting is required.
         # The last commands (ls/write-host) are used to find the output folder as this is not part 
         # Fix - handle modules here somehow (self.modules)
+
+        #"powershell.exe -exec bypass -File kansa.ps1 -targetlist %s -Modulepath \'.\Modules\'" % targetlist,
         commands = [
             "(echo $env:COMPUTERNAME > %s)" % targetlist,
-            #"powershell.exe -exec bypass -File kansa.ps1 -targetlist %s -Modulepath \'.\Modules\'" % targetlist,
             "powershell.exe -exec bypass -File kansa.ps1 -targetlist %s" % targetlist,
             "(Write-Host \'Foldername:\' $(ls | sls -Pattern \'Output_\d{14}\'))"
         ]
