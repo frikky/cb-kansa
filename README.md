@@ -4,19 +4,19 @@ Implements kansa without windows remoting needing to be enabled in the environme
 * https://github.com/davehull/Kansa
 
 # Before you start:
-* pip install -r requirements.txt 
+* pip3 install -r requirements.txt 
 * Have a cbapi config file ready (~/.carbonblack/credentials.response) with a [default] system (Details: https://github.com/carbonblack/cbapi-python)
 * Run ./setup.sh, which will copy necessary data from the Kansa github repo and set things up
 
 ## Example:
 Generate list of targets (Based on groupid 1 within the last day~):
 ```bash
-$ python getsensors.py
+$ python3 getsensors.py
 ```
 
 Run kansa on these targets, and get data back:
 ```bash
-$ python3 kansa.py --targetlist alltargets.txt --pushbin true
+$ python3 kansa.py --targetlist alltargets.txt 
 ```
 
 Get help:

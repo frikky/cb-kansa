@@ -17,7 +17,7 @@ parser = argparse.ArgumentParser("Kansa", description="Carbon Black parser for K
 # Send target
 parser.add_argument("--targetlist", default="", help="Add a targetlist")
 parser.add_argument("--target", default="", help="Run on a single target")
-parser.add_argument("--targetlocation", default="C:\\temp\\", help="Location to save on remote host")
+parser.add_argument("--targetlocation", default="C:\\ProgramData\\", help="Location to save on remote host")
 parser.add_argument("--targetfoldername", default="targetdata_%s" % (str(datetime.now().timestamp()).split(".")[0]), help="The foldername in the target location")
 parser.add_argument("--ModulePath", default="", help="Add modules to be used")
 parser.add_argument("--pushbin", default=False, help="Push depencies")

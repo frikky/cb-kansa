@@ -42,4 +42,4 @@ if __name__ == "__main__":
 
     allsensors = getsensors(groupid)
     writetofile(filename, allsensors)
-    print "Added %d sensors to %s." % (len(allsensors), filename)
+    print("Added %d sensors to %s." % (len(allsensors), filename))
