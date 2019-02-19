@@ -25,7 +25,6 @@ class handleAllJobs(object):
 
     # Unzips and removes the zipfile
     def unzip_remote(self, session):
-        print("Unzip payload on remote system")
         filepath = "%s%s" % (self.folderlocation, self.local_location)
         new_filename = filepath[:-4]
 
@@ -36,17 +35,21 @@ class handleAllJobs(object):
 
     # Pass arguments for kansa to run like normal
     def run_kansa(self, session):
-        targetlist = "targetlist.txt"
+        foldername = self.outputfolder
+        if "/" in self.outputfolder:
+            if not self.outputfolder.endswith("/"):
+                foldername = self.outputfolder.split("/")[-1]
+            else:
+                foldername = self.outputfolder.split("/")[-1]
 
-        # Creates a targetlist, as without targetlist, winremoting is required.
-        # The last commands (ls/write-host) are used to find the output folder as this is not part 
-        # Fix - handle modules here somehow (self.modules)
+        if "." in foldername: 
+            foldername = foldername.split(".")[0]
 
-        #"powershell.exe -exec bypass -File kansa.ps1 -targetlist %s -Modulepath \'.\Modules\'" % targetlist,
+        self.newfoldername = foldername
+            
+        # So what is the location I want?
         commands = [
-            "(echo $env:COMPUTERNAME > %s)" % targetlist,
-            "powershell.exe -exec bypass -File kansa.ps1 -targetlist %s" % targetlist,
-            "(Write-Host \'Foldername:\' $(ls | sls -Pattern \'Output_\d{14}\'))"
+            "powershell.exe -exec bypass -File kansa.ps1 -target $env:COMPUTERNAME -OutputFolder %s -ModulePath ./Modules -Verbose" % foldername
         ]
 
         powershell_cmd = 'powershell.exe \"%s\"' % ";".join(commands)
@@ -54,7 +57,8 @@ class handleAllJobs(object):
         # FIX - Win32 error code 0x8007010B might occur (or others)
         try:
             ret = session.create_process(powershell_cmd, working_directory=self.fullfolderlocation, wait_timeout=300)
-        except cbapi.live_response_api.LiveResponseError:
+        except cbapi.live_response_api.LiveResponseError as e:
+            print("Host %d error: %s" % (session.sensor_id, e))
             return False
 
         return ret
@@ -67,7 +71,8 @@ class handleAllJobs(object):
         return ret
 
     def get_zip_data(self, session):
-        zip_data = session.get_file("%s/%s.zip" % (self.fullfolderlocation, self.outputfolder))
+        folderlocation = "%s/%s.zip" % (self.fullfolderlocation, self.outputfolder)
+        zip_data = session.get_file(folderlocation)
         return zip_data
 
     # Cleans up the remote hosts files

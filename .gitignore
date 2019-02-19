@@ -5,14 +5,15 @@
 targets
 Modules/
 Analysis/
-kansa.ps1
 data/
 
 Output_*
-*.ps1
+Modules/*.ps1
 alltargets
 
 targetdata*
 
 __pycache__/
 alltargets.txt
+
+result_*

@@ -1,6 +1,9 @@
 from cbapi.response import *
 import time
 
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 cb = CbResponseAPI()
 
 
