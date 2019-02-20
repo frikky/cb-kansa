@@ -2,9 +2,11 @@ import os
 import zipfile 
 import requests
 import sys
+import time
 import argparse 
 import commands
 import urllib3
+import concurrent
 from datetime import datetime
 from shutil import copy, copytree, rmtree 
 
@@ -21,6 +23,8 @@ parser.add_argument("--targetlocation", default="C:\\ProgramData\\", help="Locat
 parser.add_argument("--targetfoldername", default="targetdata_%s" % (str(datetime.now().timestamp()).split(".")[0]), help="The foldername in the target location")
 parser.add_argument("--ModulePath", default="", help="Add modules to be used")
 parser.add_argument("--pushbin", default=False, help="Push depencies")
+parser.add_argument("--maxsessions", default=9, help="Max concurrent sessions in carbon black")
+parser.add_argument("--timeout", default=30, help="Timeout in seconds per request. Default: 30")
 
 class Kansa(object):
     def __init__(self): 
@@ -28,7 +32,35 @@ class Kansa(object):
         self.targets = []
         self.modules = []
         self.skipped = []
+        self.online_sensors = []
+        self.all_sensors = []
+        self.jobs = []
         self.cb = CbResponseAPI()
+        self.finished = 0
+        self.starttime = datetime.now().timestamp()
+        try:
+            self.max_sessions = int(self.args.maxsessions)
+            if self.max_sessions <= 0:
+                print("Error: maxsessions needs to be > 0")
+                exit()
+
+            print("Running with %d concurrent sessions" % self.max_sessions)
+
+        except ValueError as e:
+            print("Error: %s" % e)
+            exit()
+        try:
+            self.timeout = int(self.args.timeout)
+            if self.timeout < 30:
+                print("Error: timeout needs to be > 15 because of carbon black delay")
+                exit()
+
+            print("Running with default timeout: %d" % self.timeout)
+
+        except ValueError as e:
+            print("Error: %s" % e)
+            exit()
+
 
     # Handles input parameters
     def handle_arguments(self):
@@ -171,45 +203,7 @@ class Kansa(object):
     def check_target_list(self):
         return os.path.exists(self.args.targetlist)
 
-    def get_all_results(self, object, fullfolderlocation, output_folder):
-        for sensor in self.all_sensors:
-            jobcheck = self.cb.live_response.submit_job(object, sensor)
-
-            try:
-                # Check if sensor is online at all?
-                self.save_zip_data(sensor.computer_name, jobcheck.result())
-            except (cbapi.errors.TimeoutError, cbapi.live_response_api.LiveResponseError) as e:
-                print(e)
-                continue
-
-    def run_command(self, object, critical=True):
-        if len(self.all_sensors) <= 0:
-            print("No more sensors. All failed")
-            exit()
-
-        # Not sure what max concurrent should be
-        # FIXME
-        maxconcurrent = 50
-        jobs = []
-        for sensor in self.all_sensors:
-            jobs.append(self.cb.live_response.submit_job(object, sensor))
-
-        # This verifies if worked 100% 
-        if not critical:
-            print("Running %d concurrent jobs" % len(jobs))
-            cnt = 0
-            removed = 0
-            for item in jobs:
-                result = item.result(timeout=60)
-                if result == False:
-                    self.all_sensors.remove(self.all_sensors[cnt-removed]) 
-                    removed += 1
-                    
-                cnt += 1
-
-        # FIX - should remove sensors that aren't being scanned while underway
-
-        # Does all the hard work
+            # Does all the hard work
     def loop_targets(self, local_location):
         datafoldername = self.args.targetfoldername
 
@@ -235,10 +229,9 @@ class Kansa(object):
         # http://cbapi.readthedocs.io/en/latest/live-response.html
 
         # FIX - Not sure if this should loop targets or loop commands
-        job = commands.handleAllJobs(local_location, default_remote_location, self.args.targetlocation, fullfolderlocation, datafoldername, outputfolder=output_folder)
+        self.job = commands.handleAllJobs(local_location, default_remote_location, self.args.targetlocation, fullfolderlocation, datafoldername, outputfolder=output_folder)
 
         # Finds all target sensors
-        self.all_sensors = []
         for target in self.targets:
             sensor = self.cb.select(Sensor).where("hostname:%s" % target)
 
@@ -247,8 +240,10 @@ class Kansa(object):
                 if item.status == "Uninstall Pending":
                     continue
 
+                self.all_sensors.append(item)
+
                 if item.status != "Offline":
-                    self.all_sensors.append(item)
+                    self.online_sensors.append(item)
                 else:
                     self.skipped.append(item)
 
@@ -263,54 +258,242 @@ class Kansa(object):
 
             print(text[:-2])
 
-        if len(self.all_sensors) <= 0:
+        if len(self.online_sensors) <= 0:
             print("No sensors to scan - exiting")
             exit()
 
-        if len(self.all_sensors) < 5:
+        if len(self.online_sensors) < 5:
             text = "Loaded the following sensors: "
-            for item in self.all_sensors:
+            for item in self.online_sensors:
                 text += "%s, " % item.hostname
 
             print(text[:-2])
         else:
-            print("Loaded %d online sensor(s)" % len(self.all_sensors))
+            print("Loaded %d online sensor(s)" % len(self.online_sensors))
 
-        print("Putting files on all targets")
-        self.run_command(job.put_local_file)
+        # Get active sessions
+        # FIXME - Make this how the sessions are handled
+        # Below is the start of something
 
-        print("Unzipping on all targets")
-        self.run_command(job.unzip_remote)
-
-        print("Running kansa on all targets")
-        kansa_ret = self.run_command(job.run_kansa)
-
-        print("Zipping remote datafolder")
-        self.run_command(job.zip_remote)
-
-        print("Getting all files - this will take a while")
-        self.get_all_results(job.get_zip_data, fullfolderlocation, output_folder)
-
-        # Good to have either way, as the user might have gotten some of the data, but not all etc.
-        print("Cleaning up local host and remote targets.")
-        self.run_command(job.cleanup_target)
-
-        # Returns the foldername used for analysis. This will be the timestamp of the last machine.
+        # Should do all session handling
+        self.handle_sessions(fullfolderlocation, output_folder)
         return output_folder
+
+    #def get_active_sessions(self):
+
+    def handle_sessions(self, fullfolderlocation, output_folder):
+        # Append everything to dictionary hostname: jobfinished
+        self.curlist = []
+        cnt = 0
+        for sensor in self.all_sensors:
+            self.curlist.append({"hostname": sensor.hostname})
+            self.curlist[cnt]["analyzed"] = False 
+            self.curlist[cnt]["inprogress"] = False 
+            self.curlist[cnt]["sensor"] = sensor 
+            self.curlist[cnt]["timeout"] = self.timeout
+
+            if sensor in self.online_sensors:
+                self.curlist[cnt]["online"] = True
+            else:
+                self.curlist[cnt]["online"] = False 
+
+            cnt += 1
+
+        #print("Finished generated hostlist")
+
+        finished = False
+        cnt = 0
+        currentsessions = 0
+        iteration = 0
+        self.currentsessions = 0
+
+        self.printProgressBar(prefix = 'Progress:', suffix = '(Online: %d/%d, Finished: 0, Sessions: %d)' % (len(self.online_sensors), len(self.curlist), self.currentsessions), length = 60)
+        while(True):
+            # Add jobs for items in currentsessions
+            # Loop jobs with timeout
+            # If finished = append to an array of data and return here:
+            # finished = #self.get_all_results(job.get_zip_data, fullfolderlocation, output_folder)
+            # for each finished: remove the finished one, and append a new one 
+            # Dictionary: {name: hostname, jobran: false/true} 
+
+            # Make currentsession counter every loop
+            # This wont work hmm
+
+            active_session_count = self.get_session_count() 
+            #print("Active sessions: %d, iteration: %d" % (self.currentsessions+active_session_count, iteration))
+            if self.currentsessions == 0 and iteration != 0:
+                # Verify, as there might be stuff leftover
+                found = False
+                for item in self.curlist:
+                    if not item["analyzed"]:
+                        print("Found something not analyzed ()")
+                        print("THIS PROBABLY MEANS SOMEONE ELSE ARE RUNNING THIS SCRIPT")
+                        found = True
+                        break
+
+                if not found:
+                    print("FINISHED FOR ALL TARGETS? :)")
+                    break
+
+            if active_session_count > self.currentsessions:
+                self.currentsessions = active_session_count
+
+            # Runs first iteration of commands
+            # Basically not in use if the first round works out fine
+            if self.currentsessions < self.max_sessions:
+                newhosts = []
+                for item in self.curlist:
+                    if item["analyzed"] or not item["online"]:
+                        continue
+
+                    # Move on to check for results with timeout
+                    if self.currentsessions == self.max_sessions:
+                        break
+
+                    if item["inprogress"]:
+                        continue
+
+                    item["inprogress"] = True
+                    newhosts.append(item["hostname"])
+
+                    self.new_run_command(self.job.put_local_file, item["sensor"])
+                    self.new_run_command(self.job.unzip_remote, item["sensor"])
+                    self.new_run_command(self.job.run_kansa, item["sensor"])
+                    self.new_run_command(self.job.zip_remote, item["sensor"])
+
+                    # Add to job
+                    # Set item[analyzed] to false
+                    self.currentsessions += 1
+
+                if len(newhosts) > 0:
+                    pass
+                    #print("Putting files on %s" % ", ".join(newhosts))
+                    #print("Unzipping %s" % ", ".join(newhosts))
+                    #print("Running kansa on %s" % ", ".join(newhosts))
+                    #print("Zipping remote datafolder %s" % ", ".join(newhosts))
+
+            # Run analysis here before checking for online sensors again 
+            self.curlist = self.new_get_all_results(self.job.get_zip_data, fullfolderlocation, output_folder)
+
+            # Check ALL sensors for every iteration again?
+            for item in self.curlist:
+                # Don't care about analyzed in list
+                if item["analyzed"]:
+                    continue
+
+                newsensors = self.cb.select(Sensor).where("hostname:%s" % item["hostname"])
+                try:
+                    for cursensor in newsensors:
+                        # Verifies if same (duplicates exist) with ID
+                        if cursensor.id != item["sensor"].id:
+                            continue
+
+                        # Checks same host if status has changed
+                        if cursensor.status != "Offline" and item["online"] != True:
+                            #print("%s just turned online." % item["hostname"])
+                            item["online"] = True
+                            self.online_sensors.append(cursensor)
+                        elif cursensor.status == "Offline":
+                            #print("%s is offline." % item["hostname"])
+                            item["online"] = False 
+                            item["inprogress"] = False 
+
+                        # Break anyway, since you never reach here unelss the same sensor
+                        break
+
+                except TypeError as e:
+                    print("Error in sensor iteration 2: %s" % e)
+
+
+            iteration += 1
+
+    # Immediately starts a new session 
+    # Should return if sessions is 9 already
+    def start_new_session(self):
+        for item in self.curlist:
+            if item["analyzed"] or not item["online"]:
+                continue
+
+            # Move on to check for results with timeout
+            if self.currentsessions == self.max_sessions:
+                break
+
+            if item["inprogress"]:
+                continue
+
+            item["inprogress"] = True
+            #print("Started new session on %s" % item["hostname"])
+
+            self.new_run_command(self.job.put_local_file, item["sensor"])
+            self.new_run_command(self.job.unzip_remote, item["sensor"])
+            self.new_run_command(self.job.run_kansa, item["sensor"])
+            self.new_run_command(self.job.zip_remote, item["sensor"])
+
+            # Add to job
+            # Set item[analyzed] to false
+            self.currentsessions += 1
+
+    def new_get_all_results(self, object, fullfolderlocation, output_folder):
+        finishedsensornames = []
+
+        # Loop self.curlist 
+        for i in range(len(self.curlist)):
+            if not self.curlist[i]["inprogress"]:
+                continue
+
+            sensor = self.curlist[i]["sensor"]
+            jobcheck = self.cb.live_response.submit_job(object, sensor)
+
+            try:
+                # Check if sensor is online at all?
+                zipdata = jobcheck.result(timeout=self.curlist[i]["timeout"])
+
+                # FIXME - timeout
+                self.save_zip_data(sensor.computer_name, zipdata)
+                self.curlist[i]["inprogress"] = False
+                self.curlist[i]["analyzed"] = True 
+                #print("Finished saving zipdata for %s" % self.curlist[i]["hostname"])
+                self.new_run_command(self.job.cleanup_target, self.curlist[i]["sensor"])
+                self.currentsessions -= 1
+
+                self.finished += 1
+                self.printProgressBar(prefix = 'Progress:', suffix = '(Online: %d/%d, Finished: %d, Sessions: %d)' % (len(self.online_sensors), len(self.curlist), self.finished, self.currentsessions), length = 60)
+
+                active_session_count = self.get_session_count() 
+                #print("Active sessions: %d" % active_session_count)
+
+                # Immediately start new session
+                if active_session_count < self.max_sessions: 
+                    self.start_new_session()
+
+                self.printProgressBar(prefix = 'Progress:', suffix = '(Online: %d/%d, Finished: %d, Sessions: %d)' % (len(self.online_sensors), len(self.curlist), self.finished, self.currentsessions), length = 60)
+
+            except (cbapi.errors.TimeoutError, concurrent.futures._base.TimeoutError) as e:
+                # Increase time by 10 for each failure
+                increase_amount = 10
+                self.printProgressBar(prefix = 'Progress:', suffix = '(Online: %d/%d, Finished: %d, Sessions: %d)' % (len(self.online_sensors), len(self.curlist), self.finished, self.currentsessions), length = 60)
+
+                self.curlist[i]["timeout"] += increase_amount
+
+            except cbapi.live_response_api.LiveResponseError as e: 
+                continue
+
+        return self.curlist
+
+    def new_run_command(self, object, sensor, critical=True):
+        self.jobs.append(self.cb.live_response.submit_job(object, sensor))
 
     # Saves it in a temporary location (FIX - Not sure what to do here yet)
     def save_zip_data(self, targetname, zip_data):
         if not os.path.exists("data"):
-            print("Creating data folder")
+            #print("Creating data folder")
             os.mkdir("data")
         if not os.path.exists("data/%s" % targetname):
-            print("Creating %s folder" % targetname)
+            #print("Creating %s folder" % targetname)
             os.mkdir("data/%s" % targetname)
 
         with open("data/%s/data.zip" % targetname, "wb+") as tmp:
             tmp.write(zip_data)
-
-        print("Zipped data locally")
         
     # Have to do some magic since extractall sucks, and cba doing more for now
     def unzip(self, folderpath):
@@ -404,11 +587,91 @@ class Kansa(object):
         except OSError:
             pass
 
+    # Why isn't there any api call for this??
+    # Based on live response 'session list'
+    def get_session_count(self):
+        sessions = self.cb.get_object("/api/v1/cblr/session")
 
-# Testing for uploading data to the endpoint 
+        active = 0
+        for item in sessions:
+            if item["status"] == "active":
+                active += 1
+
+        return active
+
+        #sensor = self.cb.info()
+        #print(sensor)
+
+    # Print iterations progress
+    # Thanks https://stackoverflow.com/questions/3173320/text-progress-bar-in-the-console :)
+    # Off by 1.8% (prolly per item thing)
+    def printProgressBar (self, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█'):
+        """
+            Call in a loop to create terminal progress bar
+            @params:
+            iteration   - Required  : current iteration (Int)
+            total       - Required  : total iterations (Int)
+            prefix      - Optional  : prefix string (Str)
+            suffix      - Optional  : suffix string (Str)
+            decimals    - Optional  : positive number of decimals in percent complete (Int)
+            length      - Optional  : character length of bar (Int)
+            fill        - Optional  : bar fill character (Str)
+        """
+
+        percent = ("{0:." + str(decimals) + "f}").format(100 * (self.finished / float(len(self.curlist))))
+        filledLength = int(length * self.finished // len(self.curlist))
+        bar = fill * filledLength + '-' * (length - filledLength)
+
+        if filledLength > 0:
+            timenow = datetime.now().timestamp()
+            elapsed_time = timenow - self.starttime
+            time_left = 100 * elapsed_time / filledLength - elapsed_time
+
+            if self.firsttime == 0:
+                self.firsttime = time_left
+                self.time_left = time_left
+
+            if time_left < self.time_left:
+                if time_left >= 0:
+                    self.time_left = time_left
+
+            # Not sure why, but 2.2 is close
+            thistime = self.time_left-self.firsttime/2.1
+            if thistime <= 2 or filledLength >= 98:
+                suffix = "%s, time left: SOON^tm" % suffix
+            else:
+                suffix = "%s, time left: %f" % (suffix, thistime)
+
+            #firsttime = bla/3 = actual time
+            #self.avgtimeleft = timeleft*100/filledlength
+            #print(self.avgtimeleft)
+            #print(time_left)
+            print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end = '\r')
+        else:
+            suffix = "%s time left: calculating" % (suffix)
+            print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end = '\r')
+            
+        if self.finished == len(self.curlist): 
+            print()
+
 if __name__ == "__main__":
     # Prepares data for connection with CB sensor
     kansa = Kansa()
+    kansa.previouslength = 0
+
+    #kansa.curlist = list(range(0, 500))
+    kansa.firsttime = 0
+
+    # Initial call to print 0% progress
+    #kansa.printProgressBar(prefix = 'Progress:', suffix = 'Complete', length = 50)
+    #for i, item in enumerate(kansa.curlist):
+    #    # Do stuff...
+    #    time.sleep(0.01)
+    #    # Update Progress Bar
+    #    kansa.printProgressBar(prefix = 'Progress:', suffix = 'Complete', length = 50)
+    #    kansa.finished += 1
+
+    #exit()
 
     kansa.handle_arguments()
     kansa.pack_target_data()
