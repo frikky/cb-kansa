@@ -7,6 +7,7 @@ import argparse
 import commands
 import urllib3
 import concurrent
+import logging
 from datetime import datetime
 from shutil import copy, copytree, rmtree 
 
@@ -24,7 +25,16 @@ parser.add_argument("--targetfoldername", default="targetdata_%s" % (str(datetim
 parser.add_argument("--ModulePath", default="", help="Add modules to be used")
 parser.add_argument("--pushbin", default=False, help="Push depencies")
 parser.add_argument("--maxsessions", default=9, help="Max concurrent sessions in carbon black")
-parser.add_argument("--timeout", default=30, help="Timeout in seconds per request. Default: 30")
+parser.add_argument("--timeout", default=5, help="Timeout in seconds per request. Default: 5")
+
+logfolder = "./logs"
+if not os.path.exists(logfolder):
+    print("Made %s for logging" % logfolder)
+    os.mkdir(logfolder)
+
+logging.basicConfig(filename="%s/kansa.log" % logfolder, level=logging.INFO)
+logging.basicConfig(filename="%s/debug.log" % logfolder, level=logging.DEBUG)
+print("Logging to %s/kansa.log" % logfolder)
 
 class Kansa(object):
     def __init__(self): 
@@ -43,26 +53,33 @@ class Kansa(object):
             self.max_sessions = int(self.args.maxsessions)
             if self.max_sessions <= 0:
                 print("Error: maxsessions needs to be > 0")
+                logging.error("Error: maxsessions needs to be > 0")
                 exit()
 
             print("Running with %d concurrent sessions" % self.max_sessions)
+            logging.info("Running with %d concurrent sessions" % self.max_sessions)
 
         except ValueError as e:
             print("Error: %s" % e)
+            logging.error("Error: %s" % e)
             exit()
         try:
             self.timeout = int(self.args.timeout)
-            if self.timeout < 30:
-                print("Error: timeout needs to be > 15 because of carbon black delay")
+            if self.timeout < 5:
+                print("Error: timeout needs to be at least > 5 because of carbon black delay")
+                logging.error("Error: timeout needs to be at least > 5 because of carbon black delay")
                 exit()
 
             print("Running with default timeout: %d" % self.timeout)
+            logging.info("Running with default timeout: %d" % self.timeout)
 
         except ValueError as e:
             print("Error: %s" % e)
+            logging.error("Error: %s" % e)
             exit()
 
-
+        # Setting up logging stuff
+        
     # Handles input parameters
     def handle_arguments(self):
         targets = []
@@ -71,6 +88,7 @@ class Kansa(object):
                 self.targets = open(self.args.targetlist, "r").read().splitlines()
             else:
                 print("File \"%s\" doesn't exist" % self.args.targetlist)
+                logging.error("File \"%s\" doesn't exist" % self.args.targetlist)
                 exit()
 
         # Doesnt overwrite targetlist
@@ -84,8 +102,10 @@ class Kansa(object):
 
         if len(configfile) < 5:
             print("Loaded the following modules: %s" % ", ".join(configfile))
+            logging.info("Loaded the following modules: %s" % ", ".join(configfile))
         else:
             print("Loaded %d modules")
+            logging.info("Loaded %d modules")
 
         self.modules.append(modulepath)
 
@@ -196,6 +216,7 @@ class Kansa(object):
 
         if not self.targets:
             print("Missing targets - exiting.")
+            logging.error("Missing targets - exiting.")
             exit()
     
         # Manages filenames in a horrible way
@@ -238,15 +259,18 @@ class Kansa(object):
 
         if len(self.skipped) > 5:
             print("Skipped %d sensors because they're offline." % len(self.skipped))  
+            logging.warning("Skipped %d sensors because they're offline." % len(self.skipped))  
         elif len(self.skipped) > 0 and len(self.skipped) <= 5:
             text = "Skipped the following sensors because they're offline: "
             for item in self.skipped:
                 text += "%s, " % item.hostname
 
             print(text[:-2])
+            logging.info(text[:-2])
 
         if len(self.online_sensors) <= 0:
             print("No sensors to scan - exiting")
+            logging.error("No sensors to scan - exiting")
             exit()
 
         if len(self.online_sensors) < 5:
@@ -255,8 +279,10 @@ class Kansa(object):
                 text += "%s, " % item.hostname
 
             print(text[:-2])
+            logging.info(text[:-2])
         else:
             print("Loaded %d online sensor(s)" % len(self.online_sensors))
+            logging.info("Loaded %d online sensor(s)" % len(self.online_sensors))
 
         # Get active sessions
         # FIXME - Make this how the sessions are handled
@@ -272,6 +298,7 @@ class Kansa(object):
         # Append everything to dictionary hostname: jobfinished
         self.curlist = []
         cnt = 0
+
         for sensor in self.all_sensors:
             self.curlist.append({"hostname": sensor.hostname})
             self.curlist[cnt]["analyzed"] = False 
@@ -287,6 +314,7 @@ class Kansa(object):
             cnt += 1
 
         #print("Finished generated hostlist")
+        logging.info("Finished generated hostlist")
 
         finished = False
         cnt = 0
@@ -294,6 +322,7 @@ class Kansa(object):
         iteration = 0
         self.currentsessions = 0
 
+        logging.info("Started session handling loop")
         self.printProgressBar(prefix = 'Progress:', suffix = '(Online: %d/%d, Finished: 0, Sessions: %d)' % (len(self.online_sensors), len(self.curlist), self.currentsessions), length = 60)
         while(True):
             # Add jobs for items in currentsessions
@@ -306,20 +335,30 @@ class Kansa(object):
             # Make currentsession counter every loop
             # This wont work hmm
 
-            active_session_count = self.get_session_count() 
+            # FIXME
+            #try:
+            #    active_session_count = self.get_session_count() 
+            #except cbapi.errors.ApiError:
+            #    active_session_count = 0
+            active_session_count = 0
+
             #print("Active sessions: %d, iteration: %d" % (self.currentsessions+active_session_count, iteration))
+            logging.info("Active sessions: %d, iteration: %d" % (self.currentsessions+active_session_count, iteration))
             if self.currentsessions == 0 and iteration != 0:
                 # Verify, as there might be stuff leftover
                 found = False
                 for item in self.curlist:
                     if not item["analyzed"]:
                         print("Found something not analyzed ()")
+                        logging.info("Found something not analyzed ()")
                         print("THIS PROBABLY MEANS SOMEONE ELSE ARE RUNNING THIS SCRIPT")
+                        logging.warning("THIS PROBABLY MEANS SOMEONE ELSE ARE RUNNING THIS SCRIPT")
                         found = True
                         break
 
                 if not found:
                     print("FINISHED FOR ALL TARGETS? :)")
+                    logging.info("FINISHED FOR ALL TARGETS? :)")
                     break
 
             if active_session_count > self.currentsessions:
@@ -355,9 +394,13 @@ class Kansa(object):
                 if len(newhosts) > 0:
                     pass
                     #print("Putting files on %s" % ", ".join(newhosts))
+                    logging.info("Putting files on %s" % ", ".join(newhosts))
                     #print("Unzipping %s" % ", ".join(newhosts))
+                    logging.info("Unzipping %s" % ", ".join(newhosts))
                     #print("Running kansa on %s" % ", ".join(newhosts))
+                    logging.info("Running kansa on %s" % ", ".join(newhosts))
                     #print("Zipping remote datafolder %s" % ", ".join(newhosts))
+                    logging.info("Zipping remote datafolder %s" % ", ".join(newhosts))
 
             # Run analysis here before checking for online sensors again 
             self.curlist = self.new_get_all_results(self.job.get_zip_data, fullfolderlocation, output_folder)
@@ -378,13 +421,14 @@ class Kansa(object):
                         # Checks same host if status has changed
                         if cursensor.status != "Offline" and item["online"] != True:
                             #print("%s just turned online." % item["hostname"])
+                            logging.info("%s just turned online." % item["hostname"])
                             item["online"] = True
                             self.online_sensors.append(cursensor)
                         elif cursensor.status == "Offline":
                             if item["online"]:
                                 self.online_sensors.append(cursensor)
 
-                            #print("%s is offline." % item["hostname"])
+                            logging.info("%s is offline." % item["hostname"])
                             item["online"] = False 
                             item["inprogress"] = False 
 
@@ -392,7 +436,8 @@ class Kansa(object):
                         break
 
                 except TypeError as e:
-                    print("Error in sensor iteration 2: %s" % e)
+                    #print("Error in sensor iteration 2: %s" % e)
+                    logging.info("Error in sensor iteration 2: %s" % e)
 
 
             iteration += 1
@@ -413,11 +458,15 @@ class Kansa(object):
 
             item["inprogress"] = True
             #print("Started new session on %s" % item["hostname"])
+            logging.info("Started new session on %s" % item["hostname"])
 
             self.new_run_command(self.job.put_local_file, item["sensor"])
             self.new_run_command(self.job.unzip_remote, item["sensor"])
             self.new_run_command(self.job.run_kansa, item["sensor"])
             self.new_run_command(self.job.zip_remote, item["sensor"])
+
+            # Set a time here
+            #item["starttime"] = 
 
             # Add to job
             # Set item[analyzed] to false
@@ -438,21 +487,28 @@ class Kansa(object):
                 # Check if sensor is online at all?
                 zipdata = jobcheck.result(timeout=self.curlist[i]["timeout"])
 
+                # only gets here if it doesn't crash
                 self.save_zip_data(sensor.computer_name, zipdata)
                 self.curlist[i]["inprogress"] = False
                 self.curlist[i]["analyzed"] = True 
                 #print("Finished saving zipdata for %s" % self.curlist[i]["hostname"])
+                logging.info("Finished saving zipdata for %s" % self.curlist[i]["hostname"])
                 self.new_run_command(self.job.cleanup_target, self.curlist[i]["sensor"])
                 self.currentsessions -= 1
 
                 self.finished += 1
                 self.printProgressBar(prefix = 'Progress:', suffix = '(Online: %d/%d, Finished: %d, Sessions: %d)' % (len(self.online_sensors), len(self.curlist), self.finished, self.currentsessions), length = 60)
 
-                active_session_count = self.get_session_count() 
+                #active_session_count = self.get_session_count() 
+
+                # FIXME
+                active_session_count = 0
                 #print("Active sessions: %d" % active_session_count)
+                logging.info("Active sessions: %d" % active_session_count)
 
                 # Immediately start new session
-                if active_session_count < self.max_sessions: 
+                #if active_session_count < self.max_sessions: 
+                if self.currentsessions < self.max_sessions: 
                     self.start_new_session()
 
                 self.printProgressBar(prefix = 'Progress:', suffix = '(Online: %d/%d, Finished: %d, Sessions: %d)' % (len(self.online_sensors), len(self.curlist), self.finished, self.currentsessions), length = 60)
@@ -460,6 +516,7 @@ class Kansa(object):
             except (cbapi.errors.TimeoutError, concurrent.futures._base.TimeoutError) as e:
                 # Increase time by 10 for each failure
                 increase_amount = 10
+                logging.info("Increased amount from %d to %d on host %s" % (self.curlist[i]["timeout"], self.curlist[i]["timeout"]+increase_amount, self.curlist[i]["hostname"]))
                 self.printProgressBar(prefix = 'Progress:', suffix = '(Online: %d/%d, Finished: %d, Sessions: %d)' % (len(self.online_sensors), len(self.curlist), self.finished, self.currentsessions), length = 60)
 
                 self.curlist[i]["timeout"] += increase_amount
@@ -476,9 +533,11 @@ class Kansa(object):
     def save_zip_data(self, targetname, zip_data):
         if not os.path.exists("data"):
             #print("Creating data folder")
+            logging.info("Creating data folder")
             os.mkdir("data")
         if not os.path.exists("data/%s" % targetname):
             #print("Creating %s folder" % targetname)
+            logging.info("Creating %s folder" % targetname)
             os.mkdir("data/%s" % targetname)
 
         with open("data/%s/data.zip" % targetname, "wb+") as tmp:
@@ -497,6 +556,7 @@ class Kansa(object):
     # This step is uneccesary, but I don't want to redo the mess above just yet :)
     def prepare_analysis(self, datafolder, analysisfolder):
         print("Moving files for analysis")
+        logging.info("Moving files for analysis")
 
         if not os.path.exists(datafolder):
             os.mkdir(datafolder)
@@ -547,6 +607,7 @@ class Kansa(object):
             #rmtree(datafolder)
 
         print("%s is now ready for analysis with %d file(s) and %d system(s)" % (analysisfolder, filecount, computercount))
+        logging.info("%s is now ready for analysis with %d file(s) and %d system(s)" % (analysisfolder, filecount, computercount))
 
 # Cleans up the remote hosts files
     def cleanup_local(self):
@@ -632,10 +693,6 @@ class Kansa(object):
             else:
                 suffix = "%s, time left: %f" % (suffix, thistime)
 
-            #firsttime = bla/3 = actual time
-            #self.avgtimeleft = timeleft*100/filledlength
-            #print(self.avgtimeleft)
-            #print(time_left)
             print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end = '\r')
         else:
             suffix = "%s time left: calculating" % (suffix)

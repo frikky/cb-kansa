@@ -18,7 +18,7 @@ class handleAllJobs(object):
             except cbapi.live_response_api.LiveResponseError as e:
                 # FIX - Remove file and reupload, as this most likely means duplication
                 # Most likely error: Win32 error code 0x80070003 (ERROR_PATH_NOT_FOUND)
-                #print("Host %d error: %s" % (session.sensor_id, e))
+                print("Host %d error: %s" % (session.sensor_id, e))
                 return False
 
         return True 
