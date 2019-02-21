@@ -37,6 +37,7 @@ class Kansa(object):
         self.jobs = []
         self.cb = CbResponseAPI()
         self.finished = 0
+        self.firsttime = 0
         self.starttime = datetime.now().timestamp()
         try:
             self.max_sessions = int(self.args.maxsessions)
@@ -87,20 +88,6 @@ class Kansa(object):
             print("Loaded %d modules")
 
         self.modules.append(modulepath)
-
-        """
-        # Old use with all modules
-        for folder in os.listdir("Modules"):
-            # Skipping files - cba properly for testing
-            try:
-                for item in os.listdir("Modules/%s" % folder):
-                    self.modules.append("Modules/%s/%s" % (folder, item))
-            except OSError:
-                # Hardcoded for conf
-                if folder == "Modules.conf":
-                    self.modules.append("Modules/Modules.conf")
-                continue
-            """
 
     # Parses configurationfile
     def get_configuration_paths(self, configpath):
@@ -394,6 +381,9 @@ class Kansa(object):
                             item["online"] = True
                             self.online_sensors.append(cursensor)
                         elif cursensor.status == "Offline":
+                            if item["online"]:
+                                self.online_sensors.append(cursensor)
+
                             #print("%s is offline." % item["hostname"])
                             item["online"] = False 
                             item["inprogress"] = False 
@@ -448,7 +438,6 @@ class Kansa(object):
                 # Check if sensor is online at all?
                 zipdata = jobcheck.result(timeout=self.curlist[i]["timeout"])
 
-                # FIXME - timeout
                 self.save_zip_data(sensor.computer_name, zipdata)
                 self.curlist[i]["inprogress"] = False
                 self.curlist[i]["analyzed"] = True 
@@ -636,6 +625,7 @@ class Kansa(object):
                     self.time_left = time_left
 
             # Not sure why, but 2.2 is close
+            #thistime = self.time_left-self.firsttime/2.1
             thistime = self.time_left-self.firsttime/2.1
             if thistime <= 2 or filledLength >= 98:
                 suffix = "%s, time left: SOON^tm" % suffix
@@ -657,21 +647,6 @@ class Kansa(object):
 if __name__ == "__main__":
     # Prepares data for connection with CB sensor
     kansa = Kansa()
-    kansa.previouslength = 0
-
-    #kansa.curlist = list(range(0, 500))
-    kansa.firsttime = 0
-
-    # Initial call to print 0% progress
-    #kansa.printProgressBar(prefix = 'Progress:', suffix = 'Complete', length = 50)
-    #for i, item in enumerate(kansa.curlist):
-    #    # Do stuff...
-    #    time.sleep(0.01)
-    #    # Update Progress Bar
-    #    kansa.printProgressBar(prefix = 'Progress:', suffix = 'Complete', length = 50)
-    #    kansa.finished += 1
-
-    #exit()
 
     kansa.handle_arguments()
     kansa.pack_target_data()

@@ -78,6 +78,7 @@ class handleAllJobs(object):
 
     # Cleans up the remote hosts files
     def cleanup_target(self, session):
-        command = "powershell.exe \"Remove-Item \'C:\\temp\\%s\' -Recurse -Force\"" % self.datafoldername 
+        command = "powershell.exe \"Remove-Item \'%s%s\' -Recurse -Force\"" % (self.folderlocation, self.datafoldername)
+        print(command)
         ret = session.create_process(command)
         return ret
